@@ -1,0 +1,416 @@
+{
+  "name": "metrics",
+  "namespace": "com.ryanchapin.inmemdatastore",
+  "version": "1",
+  "type": "record",
+  "fields": [
+    {
+      "name": "id",
+      "type": "string"
+    },
+    {
+      "name": "collection_time",
+      "type": "long"
+    },
+    {
+      "name": "metricdbl1",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl2",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl3",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl4",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl5",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl6",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl7",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl8",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl9",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl10",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl11",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl12",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl13",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl14",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl15",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl16",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl17",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl18",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl19",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl20",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl21",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl22",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl23",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl24",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl25",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl26",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl27",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl28",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl29",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl30",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl31",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl32",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl33",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl34",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl35",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl36",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl37",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl38",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl39",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl40",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl41",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl42",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl43",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl44",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl45",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl46",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl47",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl48",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl49",
+      "type": "double"
+    },
+    {
+      "name": "metricdbl50",
+      "type": "double"
+    },
+    {
+      "name": "metricstr1",
+      "type": "string"
+    },
+    {
+      "name": "metricstr2",
+      "type": "string"
+    },
+    {
+      "name": "metricstr3",
+      "type": "string"
+    },
+    {
+      "name": "metricstr4",
+      "type": "string"
+    },
+    {
+      "name": "metricstr5",
+      "type": "string"
+    },
+    {
+      "name": "metricstr6",
+      "type": "string"
+    },
+    {
+      "name": "metricstr7",
+      "type": "string"
+    },
+    {
+      "name": "metricstr8",
+      "type": "string"
+    },
+    {
+      "name": "metricstr9",
+      "type": "string"
+    },
+    {
+      "name": "metricstr10",
+      "type": "string"
+    },
+    {
+      "name": "metricstr11",
+      "type": "string"
+    },
+    {
+      "name": "metricstr12",
+      "type": "string"
+    },
+    {
+      "name": "metricstr13",
+      "type": "string"
+    },
+    {
+      "name": "metricstr14",
+      "type": "string"
+    },
+    {
+      "name": "metricstr15",
+      "type": "string"
+    },
+    {
+      "name": "metricstr16",
+      "type": "string"
+    },
+    {
+      "name": "metricstr17",
+      "type": "string"
+    },
+    {
+      "name": "metricstr18",
+      "type": "string"
+    },
+    {
+      "name": "metricstr19",
+      "type": "string"
+    },
+    {
+      "name": "metricstr20",
+      "type": "string"
+    },
+    {
+      "name": "metricstr21",
+      "type": "string"
+    },
+    {
+      "name": "metricstr22",
+      "type": "string"
+    },
+    {
+      "name": "metricstr23",
+      "type": "string"
+    },
+    {
+      "name": "metricstr24",
+      "type": "string"
+    },
+    {
+      "name": "metricstr25",
+      "type": "string"
+    },
+    {
+      "name": "metricstr26",
+      "type": "string"
+    },
+    {
+      "name": "metricstr27",
+      "type": "string"
+    },
+    {
+      "name": "metricstr28",
+      "type": "string"
+    },
+    {
+      "name": "metricstr29",
+      "type": "string"
+    },
+    {
+      "name": "metricstr30",
+      "type": "string"
+    },
+    {
+      "name": "metricstr31",
+      "type": "string"
+    },
+    {
+      "name": "metricstr32",
+      "type": "string"
+    },
+    {
+      "name": "metricstr33",
+      "type": "string"
+    },
+    {
+      "name": "metricstr34",
+      "type": "string"
+    },
+    {
+      "name": "metricstr35",
+      "type": "string"
+    },
+    {
+      "name": "metricstr36",
+      "type": "string"
+    },
+    {
+      "name": "metricstr37",
+      "type": "string"
+    },
+    {
+      "name": "metricstr38",
+      "type": "string"
+    },
+    {
+      "name": "metricstr39",
+      "type": "string"
+    },
+    {
+      "name": "metricstr40",
+      "type": "string"
+    },
+    {
+      "name": "metricstr41",
+      "type": "string"
+    },
+    {
+      "name": "metricstr42",
+      "type": "string"
+    },
+    {
+      "name": "metricstr43",
+      "type": "string"
+    },
+    {
+      "name": "metricstr44",
+      "type": "string"
+    },
+    {
+      "name": "metricstr45",
+      "type": "string"
+    },
+    {
+      "name": "metricstr46",
+      "type": "string"
+    },
+    {
+      "name": "metricstr47",
+      "type": "string"
+    },
+    {
+      "name": "metricstr48",
+      "type": "string"
+    },
+    {
+      "name": "metricstr49",
+      "type": "string"
+    },
+    {
+      "name": "metricstr50",
+      "type": "string"
+    }
+  ]
+}
