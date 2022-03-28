@@ -57,7 +57,7 @@ func (w *Writer) writeLimitedKeySpaceRecords() {
 		key := w.worker.getRandomKey()
 		log.Debugf("Writer id=%d, writing record with key=%s", w.worker.id, key)
 		recSpec := RecordSpec{Id: key, CollectionTime: time.Now().UTC().UnixNano()}
-		record := generateAvroRecord(recSpec)
+		record := generateTestRecord(recSpec)
 		w.worker.imds.Put(key, record)
 	}
 }

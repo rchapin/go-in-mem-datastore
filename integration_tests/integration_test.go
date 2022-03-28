@@ -38,7 +38,7 @@ var rm *ResourceManager
 
 // Utility functions -----------------------------------------------------------
 
-func generateAvroRecord(recSpec RecordSpec) map[string]interface{} {
+func generateTestRecord(recSpec RecordSpec) map[string]interface{} {
 	retval := map[string]interface{}{}
 	// retval[avroFieldId] = fmt.Sprintf("%s%d", idPrefix, recordSpec)
 	retval[avroFieldId] = recSpec.Id
@@ -56,14 +56,14 @@ func generateAvroRecord(recSpec RecordSpec) map[string]interface{} {
 	return retval
 }
 
-func generateAvroRecords(numRecords int) []map[string]interface{} {
+func generateTestRecords(numRecords int) []map[string]interface{} {
 	retval := []map[string]interface{}{}
 	for i := 0; i < numRecords; i++ {
 		recSpec := RecordSpec{
 			Id:             fmt.Sprintf("%s%d", idPrefix, i),
 			CollectionTime: time.Now().UnixNano(),
 		}
-		retval = append(retval, generateAvroRecord(recSpec))
+		retval = append(retval, generateTestRecord(recSpec))
 	}
 	return retval
 }
@@ -71,7 +71,7 @@ func generateAvroRecords(numRecords int) []map[string]interface{} {
 func generateRecordsFromRecordSpecs(recSpecs []RecordSpec) []map[string]interface{} {
 	retval := []map[string]interface{}{}
 	for _, recSpec := range recSpecs {
-		retval = append(retval, generateAvroRecord(recSpec))
+		retval = append(retval, generateTestRecord(recSpec))
 	}
 	return retval
 }

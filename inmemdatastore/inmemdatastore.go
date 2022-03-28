@@ -5,7 +5,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/linkedin/goavro"
 	log "github.com/rchapin/rlog"
 	"github.com/rcrowley/go-metrics"
 )
@@ -23,7 +22,6 @@ type (
 		Cancel                   context.CancelFunc
 		SerializationChanBufSize int
 		NumSerializers           int
-		Schema                   string
 		OutputDirPath            string
 	}
 )
@@ -38,7 +36,6 @@ type InMemDataStore struct {
 	serializationChan SerializationChan
 	serializers       Serializers
 	datastore         map[string]interface{}
-	codec             *goavro.Codec
 	mux               *sync.RWMutex
 	readTimes         []int64
 	writeTimes        []int64
@@ -54,12 +51,6 @@ func NewInMemDatastore(cfg Config) *InMemDataStore {
 	// all of the open file handles before exiting.
 	ctx, cancel := context.WithCancel(context.Background())
 
-	codec, err := goavro.NewCodec(cfg.Schema)
-	if err != nil {
-		// TODO: handle this error better.  Or, might be fine if it panics here as passing it an
-		// invalid schema won't work regardless.
-		panic(err)
-	}
 	retval := &InMemDataStore{
 		cfg:              cfg,
 		ctx:              cfg.Ctx,
@@ -69,7 +60,6 @@ func NewInMemDatastore(cfg Config) *InMemDataStore {
 		wg:               &sync.WaitGroup{},
 		serializers:      make(Serializers, cfg.NumSerializers),
 		datastore:        make(map[string]interface{}),
-		codec:            codec,
 		mux:              &sync.RWMutex{},
 	}
 	retval.serializationChan = make(chan map[string]interface{}, cfg.SerializationChanBufSize)
@@ -153,7 +143,6 @@ func (q *InMemDataStore) Start() {
 			ctx:       q.serializerCtx,
 			id:        i,
 			outputDir: q.cfg.OutputDirPath,
-			codec:     q.codec,
 			inputChan: q.serializationChan,
 			wg:        q.wg,
 		}

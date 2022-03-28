@@ -78,7 +78,6 @@ func (tr *TestRunner) RunTest() {
 		Cancel:                   tr.cfg.cancel,
 		SerializationChanBufSize: tr.cfg.serializationChanBufSize,
 		NumSerializers:           tr.cfg.numSerializers,
-		Schema:                   tr.cfg.schema,
 		OutputDirPath:            tr.cfg.outputDirPath,
 	}
 	IMDS := inmemdatastore.NewInMemDatastore(IMDSCfg)
