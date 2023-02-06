@@ -1,4 +1,0 @@
-package inmemdatastore
-
-func Writ() {
-}

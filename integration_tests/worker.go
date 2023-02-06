@@ -1,5 +1,3 @@
-//go:build integration
-
 package inttest
 
 import (
@@ -18,7 +16,6 @@ type Worker struct {
 	id       int
 	imds     *inmemdatastore.InMemDataStore
 	wg       *sync.WaitGroup
-	times    []int64
 	keySpace []string
 }
 

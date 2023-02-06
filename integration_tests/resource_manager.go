@@ -1,5 +1,3 @@
-//go:build integration
-
 package inttest
 
 import (
@@ -8,28 +6,39 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
-
-	"github.com/linkedin/goavro"
 )
 
+type PerfConfigs struct {
+	numTestKeys            int
+	numReaders             int
+	numWriters             int
+	numWritesPerWriter     int
+	numSerializers         int
+	serializerChanBuffSize int
+	datastoreShards        int
+	readerSleepTime        int64
+	writerSleepTime        int64
+}
+
 type ResourceManager struct {
-	// Context and cancelfunc for the test code itself
+	// Context, cancelfunc, for the test code itself
 	tCtx    context.Context
 	tCancel context.CancelFunc
-	// Context and cancelfunc to be passed into the test runner and the OUT
-	appCtx                 context.Context
-	appCancel              context.CancelFunc
-	wg                     *sync.WaitGroup
-	codec                  *goavro.Codec
-	avroString             string
-	avroJson               map[string]interface{}
+	// Context, cancelfunc, and wg to be passed into the test runner
+	testRunnerCtx          context.Context
+	testRunnerCancel       context.CancelFunc
+	testRunnerWg           *sync.WaitGroup
+	avroSchemaString       string
+	avroSchemaJson         map[string]interface{}
 	avroNumMetricDblFields int
 	avroNumMetricStrFields int
 	testParentDirPath      string
 	testDataDirPath        string
 	testDirs               map[string]string
+	perfConfig             *PerfConfigs
 }
 
 func NewResourceManager(testParentDir string) *ResourceManager {
@@ -38,6 +47,17 @@ func NewResourceManager(testParentDir string) *ResourceManager {
 		tCtx:              ctx,
 		tCancel:           cancel,
 		testParentDirPath: testParentDir,
+	}
+	retval.perfConfig = &PerfConfigs{
+		numTestKeys:            getEnvVar(envVarPerfNumTestKeys, perfNumTestKeysDefault),
+		numReaders:             getEnvVar(envVarPerfNumReaders, perfNumReadersDefault),
+		numWriters:             getEnvVar(envVarPerfNumWriters, perfNumWritersDefault),
+		numWritesPerWriter:     getEnvVar(envVarPerfNumWritesPerWriter, perfNumWritesPerWriterDefault),
+		numSerializers:         getEnvVar(envVarPerfNumSerializers, perfNumSerializersDefault),
+		serializerChanBuffSize: getEnvVar(envVarPerfSerializerChanBuffSize, perfSerializerChanBuffSizeDefault),
+		datastoreShards:        getEnvVar(envVarPerfDatastoreShards, perfDatastoreShardsDefault),
+		readerSleepTime:        int64(getEnvVar(envVarPerfReaderSleepTime, perfReadersSleepTimeDefault)),
+		writerSleepTime:        int64(getEnvVar(envVarPerfWriterSleepTime, perfWriterSleepTimeDefault)),
 	}
 
 	// Concatenate the paths for all of the test dirs that we will create under our parent test
@@ -50,25 +70,31 @@ func NewResourceManager(testParentDir string) *ResourceManager {
 	// Load our avro definition file from disk and then generate both a "JSON"
 	// map[string]interface{} and a goavro.Codec from it.  We will use the JSON representation of
 	// the schema to glean information about the names and numbers of the fields it contains.
-	retval.avroString = readFile(fmt.Sprintf("testdata/%s", avroSchemaFile))
+	retval.avroSchemaString = readFile(fmt.Sprintf("testdata/%s", avroSchemaFile))
 
 	var avroJson map[string]interface{}
-	err := json.Unmarshal([]byte(retval.avroString), &avroJson)
+	err := json.Unmarshal([]byte(retval.avroSchemaString), &avroJson)
 	if err != nil {
 		panic(err)
 	}
-	retval.avroJson = avroJson
+	retval.avroSchemaJson = avroJson
 
 	// Determine how many "metricdbl" and "metricstr" fields are contained in the avro schema.  We
 	// need this so that we can later dynamically generate avro data.
 	retval.avroNumMetricDblFields, retval.avroNumMetricStrFields = getFieldTypeCounts(avroJson)
+	return retval
+}
 
-	codec, err := goavro.NewCodec(retval.avroString)
+func getEnvVar(key string, defaultVal int) int {
+	s := os.Getenv(key)
+	if s == "" {
+		return defaultVal
+	}
+	i, err := strconv.Atoi(s)
 	if err != nil {
 		panic(err)
 	}
-	retval.codec = codec
-	return retval
+	return i
 }
 
 func getFieldTypeCounts(avroJson map[string]interface{}) (int, int) {
@@ -97,9 +123,9 @@ func (r *ResourceManager) refreshContextsWg() {
 	// the TestRunner.  We generate the "sub" context/cancelfunc from the top level context that we
 	// use to control the test suite itself.
 	ctx, cancel := context.WithCancel(r.tCtx)
-	r.appCtx = ctx
-	r.appCancel = cancel
-	r.wg = &sync.WaitGroup{}
+	r.testRunnerCtx = ctx
+	r.testRunnerCancel = cancel
+	r.testRunnerWg = &sync.WaitGroup{}
 }
 
 func (r *ResourceManager) setupTestDirs() {

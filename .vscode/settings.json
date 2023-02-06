@@ -1,7 +1,16 @@
 {
-  "go.buildFlags": [
-    "-tags=unit,integration"
-  ],
-  "go.testTags": "unit,integration",
-  "go.buildTags": "unit,integration"
+  "go.testEnvVars": {
+    "INTEGRATION": "1",
+    "IMDS_INTTEST_PERF_DATASTORE_SHARDS": 16,
+    "IMDS_INTTEST_PERF_NUM_WRITES_PER_WRITER": 200,
+    "IMDS_INTTEST_PERF_WRITES_SLEEP_TIME": 5,
+    "IMDS_INTTEST_PERF_NUM_WRITERS": 20,
+    "IMDS_INTTEST_PERF_NUM_READERS": 20,
+    "IMDS_INTTEST_PERF_READER_SLEEP_TIME": 5,
+  },
+  "cSpell.words": [
+    "curr",
+    "hasher",
+    "waitgroups"
+  ]
 }

@@ -2,109 +2,125 @@ package inmemdatastore
 
 import (
 	"context"
+	"fmt"
+	"hash/fnv"
 	"sync"
 	"time"
 
-	"github.com/linkedin/goavro"
 	log "github.com/rchapin/rlog"
-	"github.com/rcrowley/go-metrics"
 )
 
 const (
-	RecFieldId             = "id"
-	RecFieldCollectionTime = "collection_time"
+	RecFieldId = "id"
 )
 
 type (
-	SerializationChan chan map[string]interface{}
-	Serializers       map[int]*Serializer
-	Config            struct {
-		Ctx                      context.Context
-		Cancel                   context.CancelFunc
-		SerializationChanBufSize int
-		NumSerializers           int
-		Schema                   string
-		OutputDirPath            string
+	PersistenceChan chan map[string]interface{}
+	Persisters      map[int]*Persister
+	Datastores      map[uint64]*Datastore
+	Config          struct {
+		NumDatastoreShards      int
+		PersistenceChan         PersistenceChan
+		PersistanceChanBuffSize int
+		Persisters              Persisters
+		// The top-level key in the map[string]interface{} records that will be stored in the
+		// InMemoryDataStore.  This is required for the Put method to process a new record.
+		RecordTimestampKey string
 	}
 )
 
-type InMemDataStore struct {
-	cfg               Config
-	ctx               context.Context
-	cancel            context.CancelFunc
-	serializerCtx     context.Context
-	serializerCancel  context.CancelFunc
-	wg                *sync.WaitGroup
-	serializationChan SerializationChan
-	serializers       Serializers
-	datastore         map[string]interface{}
-	codec             *goavro.Codec
-	mux               *sync.RWMutex
-	readTimes         []int64
-	writeTimes        []int64
-	numReads          int64
-	numWrites         int64
-	startTime         int64
+type Datastore struct {
+	Id        uint64
+	Data      map[string]interface{}
+	NumReads  int64
+	NumWrites int64
+	mux       *sync.RWMutex
 }
 
-func NewInMemDatastore(cfg Config) *InMemDataStore {
-	// Create a separate context and cancelFunc pair that we will use to manage the Serializers.
-	// Otherwise, if the "parent" cancelFunc is invoked it will both the IMDS and the Serializers to
-	// shutdown and the IMDS will not be able to block and wait for the serializers to cleanly close
-	// all of the open file handles before exiting.
-	ctx, cancel := context.WithCancel(context.Background())
-
-	codec, err := goavro.NewCodec(cfg.Schema)
-	if err != nil {
-		// TODO: handle this error better.  Or, might be fine if it panics here as passing it an
-		// invalid schema won't work regardless.
-		panic(err)
+func NewDatastore(id uint64) *Datastore {
+	return &Datastore{
+		Id:        id,
+		Data:      make(map[string]interface{}),
+		NumReads:  0,
+		NumWrites: 0,
+		mux:       &sync.RWMutex{},
 	}
+}
+
+type InMemDataStore struct {
+	ctx                context.Context
+	cancel             context.CancelFunc
+	wg                 *sync.WaitGroup
+	datastores         Datastores
+	numShards          int
+	recordTimestampKey string
+	persisters         Persisters
+	startTime          int64
+	persisterCtx       context.Context
+	persisterCancel    context.CancelFunc
+	persistenceChan    PersistenceChan
+}
+
+func NewInMemDatastore(ctx context.Context, cancel context.CancelFunc, wg *sync.WaitGroup, cfg Config) *InMemDataStore {
+	// Create a separate context and cancelFunc pair that we will use to manage the Persisters.
+	// Otherwise, if the "parent" cancelFunc is invoked it will cancel both the IMDS and the
+	// Persisters and the IMDS will not be able to block and wait for the Persisters to cleanly
+	// close before exiting.
+	persisterCtx, persisterCancel := context.WithCancel(context.Background())
+
 	retval := &InMemDataStore{
-		cfg:              cfg,
-		ctx:              cfg.Ctx,
-		cancel:           cfg.Cancel,
-		serializerCtx:    ctx,
-		serializerCancel: cancel,
-		wg:               &sync.WaitGroup{},
-		serializers:      make(Serializers, cfg.NumSerializers),
-		datastore:        make(map[string]interface{}),
-		codec:            codec,
-		mux:              &sync.RWMutex{},
+		ctx:                ctx,
+		cancel:             cancel,
+		wg:                 wg,
+		datastores:         make(Datastores, cfg.NumDatastoreShards),
+		numShards:          cfg.NumDatastoreShards,
+		recordTimestampKey: cfg.RecordTimestampKey,
+		persisters:         cfg.Persisters,
+		persistenceChan:    cfg.PersistenceChan,
+		persisterCtx:       persisterCtx,
+		persisterCancel:    persisterCancel,
 	}
-	retval.serializationChan = make(chan map[string]interface{}, cfg.SerializationChanBufSize)
-	log.Info(cfg.NumSerializers)
-
-	// Keeping track of r/w times.  Will just allocate slices to start.  Ultimately the expansion
-	// of the slices could cause additional latency, as this is just a total hack.
-	retval.readTimes = []int64{}
-	retval.writeTimes = []int64{}
+	for i := uint64(0); i < uint64(retval.numShards); i++ {
+		retval.datastores[i] = NewDatastore(i)
+	}
 	return retval
 }
 
-func (q *InMemDataStore) Get(key string) (interface{}, bool) {
-	start := time.Now().UTC().UnixNano()
-	q.mux.RLock()
-	rec, ok := q.datastore[key]
-	q.numReads++
-	q.mux.RUnlock()
-	duration := time.Now().UTC().UnixNano() - start
-	if duration > 0 {
-		q.readTimes = append(q.readTimes, duration)
+func (ds *InMemDataStore) Get(key string) (interface{}, error) {
+	datastore, err := ds.getDatastoreShard(key)
+	if err != nil {
+		return nil, err
 	}
-	return rec, ok
+	datastore.mux.RLock()
+	rec := datastore.Data[key]
+	datastore.NumReads++
+	datastore.mux.RUnlock()
+	return rec, nil
 }
 
 // GetAll will return the entire in memory data store.  For a production grade piece of software we
 // would have to do something other than just returning a reference to the private map, such as a
 // deep copy.  For now, this is just here to facilitate testing.
-func (q *InMemDataStore) GetAll() map[string]interface{} {
-	return q.datastore
+func (ds *InMemDataStore) GetAll() map[string]interface{} {
+	retval := make(map[string]interface{})
+	for _, datastore := range ds.datastores {
+		for k, v := range datastore.Data {
+			retval[k] = v
+		}
+	}
+	return retval
 }
 
-func (q *InMemDataStore) Put(key string, val map[string]interface{}) error {
-	start := time.Now().UTC().UnixNano()
-	q.mux.Lock()
+func (ds *InMemDataStore) GetDatastores() Datastores {
+	return ds.datastores
+}
+
+func (ds *InMemDataStore) Put(key string, val map[string]interface{}) error {
+	datastore, err := ds.getDatastoreShard(key)
+	if err != nil {
+		return err
+	}
+	datastore.mux.Lock()
 
 	// Here we validate that we do not yet have a record in the datastore that is newer than this
 	// one.  It is entirely possible, given multiple concurrent writes that a record was put into
@@ -114,80 +130,69 @@ func (q *InMemDataStore) Put(key string, val map[string]interface{}) error {
 	// to disk.k
 	//
 	// First, attempt to get this record from the datastore
-	rec, ok := q.datastore[key]
+	data := datastore.Data
+	rec, ok := data[key]
 	if !ok {
 		// We don't yet have a record for this key in the datastore at all, just write it and continue
-		q.datastore[key] = val
+		data[key] = val
 	} else {
 		// Get the collection_time from the existing record and ensure that it is older
 		recMap := rec.(map[string]interface{})
-		existingTimestamp := recMap[RecFieldCollectionTime].(int64)
-		if existingTimestamp < val[RecFieldCollectionTime].(int64) {
-			// The incoming record is newer than what we currently have in the cache, we should
-			// persist this in the cache.
-			q.datastore[key] = val
+		existingTimestamp, ok := recMap[ds.recordTimestampKey].(int64)
+		if !ok {
+			// There is no top-level key in the recMap pulled from the cache to which we can compare
+			// timestamps, we will just write it.
+			// TODO: add some sort of stat that we can return to the caller
+			data[key] = val
+		} else {
+			if existingTimestamp < val[ds.recordTimestampKey].(int64) {
+				// The incoming record is newer than what we currently have in the cache, we should
+				// persist this in the cache.
+				data[key] = val
+			}
 		}
 	}
 
-	q.numWrites++
-	q.mux.Unlock()
-	duration := time.Now().UTC().UnixNano() - start
-	if duration > 0 {
-		q.writeTimes = append(q.writeTimes, duration)
+	datastore.NumWrites++
+	numWrites := datastore.NumWrites
+	datastore.mux.Unlock()
+	if numWrites%500 == 0 {
+		log.Infof("IMDS Datastore writes, id=%d, numWrites=%d", datastore.Id, numWrites)
 	}
 
-	if q.numWrites%1000 == 0 {
-		log.Infof("IMDS numWrites=%d", q.numWrites)
-	}
-
-	q.serializationChan <- val
+	ds.persistenceChan <- val
 	return nil
 }
 
-// Start will spin up the specified number of Serializers defined in the configuration and when
-// returns will be ready for reads and writes.
-func (q *InMemDataStore) Start() {
-	q.startTime = time.Now().UTC().UnixMilli()
-	for i := 0; i < q.cfg.NumSerializers; i++ {
-		serCfg := SerializerConfig{
-			ctx:       q.serializerCtx,
-			id:        i,
-			outputDir: q.cfg.OutputDirPath,
-			codec:     q.codec,
-			inputChan: q.serializationChan,
-			wg:        q.wg,
-		}
-		serializer := NewSerializer(serCfg)
-		q.serializers[i] = serializer
-		serializer.Run()
+// Start will spin up the Persisters and when it returns will be ready for reads and writes.
+func (ds *InMemDataStore) Start() {
+	ds.startTime = time.Now().UTC().UnixMilli()
+	for _, persister := range ds.persisters {
+		persister.Run()
 	}
 }
 
 // Shutdown will signal the Serializers to close their open file handles and shutdown the IMDS.
-func (q *InMemDataStore) Shutdown() {
+func (ds *InMemDataStore) Shutdown() {
 	log.Info("Shutdown command received, shutting down serializers")
-	q.serializerCancel()
+	ds.persisterCancel()
 	log.Info("Waiting for serializers to finish shutting down")
-	q.wg.Wait()
-	duration := time.Now().UTC().UnixMilli() - q.startTime
-	q.printOverallStats(duration)
-	q.printStats(q.readTimes, "read")
-	q.printStats(q.writeTimes, "write")
+	ds.wg.Wait()
 	log.Info("Shutdown complete")
 }
 
-func (q *InMemDataStore) printOverallStats(duration int64) {
-	writeRate := float64(q.numWrites) / float64(duration)
-	readRate := float64(q.numReads) / float64(duration)
-	log.Infof("Writes per milli=%f, Reads per milli=%f", writeRate, readRate)
+func (ds *InMemDataStore) getDatastoreShard(key string) (*Datastore, error) {
+	shardId := GetDatastoreShardId(key, ds.numShards)
+	datastore, ok := ds.datastores[shardId]
+	if !ok {
+		return nil, fmt.Errorf("unable to resolve datastore; key=%s, shardId=%d", key, shardId)
+	}
+	return datastore, nil
 }
 
-func (q *InMemDataStore) printStats(vals []int64, statsType string) {
-	s := metrics.NewSampleSnapshot(int64(len(vals)), vals)
-	log.Infof("%s stats in milliseconds: min=%v, mean=%v, max=%v",
-		statsType,
-		float64(s.Min())/1000000,
-		s.Mean()/1000000,
-		float64(s.Max())/1000000)
-	log.Infof("Total reads=%d, writes=%d", q.numReads, q.numWrites)
+func GetDatastoreShardId(key string, numShards int) uint64 {
+	hasher := fnv.New64a()
+	hasher.Write([]byte(key))
+	hash := hasher.Sum64()
+	return hash % uint64(numShards)
 }

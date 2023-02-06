@@ -8,22 +8,19 @@ An in-memory data store that is also persisted to disk.
 
 Supports concurrent ```Get(key string)``` and ```Put(key string, val map[string]interface{})```.
 
-All reads are directly from an in-memory ```map[string]interface{}``` data store.  The test records are a 100 field Avro record with 50 doubles and 50 strings.  Each record is approximately 102800 bytes.  Since most of the data is strings, in order to easily "bulk" up the test payloads, it does not gain as much benefit from the default avro encoding algorithm.
+All reads are directly from an in-memory ```map[string]interface{}``` data store.  The test records are a 100 field Avro record with 50 doubles and 50 strings.  Each record is approximately 102800 bytes.  Since most of the data is strings, in order to easily "bulk" up the test payloads, as it does not gain as much benefit from the default avro encoding.
 
-For each incoming record, the writer first validates that this is the most recent record for the given key in the in-memory store.  Otherwise, it is possible that, even though we would persist the most recent data for a given key to disk, we might return stale data to readers.
+For each incoming record, the writer first validates that this is the most recent record for the given key in the in-memory store before overwriting they key.  Otherwise, it is possible that we might overwrite the value in the cache with an older record as we cannot guarantee the ordering of writes to the cache.
 
-All writes are persisted to disk at the time of write.  In order to increase performance, once the write to the in-memory store is complete and the mutex unlocked the incoming data is written to a channel.  That channel is read by multiple ```Serializer``` go routines that each write records to separate files to parallelize I/O operations.
+All writes are persisted to disk at the time of write whether or not they are the most recent value.  In order to increase performance that data store is split into a configurable number of shards.  Further, once the write to the in-memory shard is complete and the mutex unlocked the incoming data is written to a channel.  That channel is read by multiple `Persister` go routines that each write to separate files to parallelize I/O operations.
 
 It should be possible to use this as-is in an embedded environment as long as it is connected to a network and can ship the data files to another store for analytics.
 ## To Dos
 
-1. Shard the in-memory data store.  We can hash the incoming key and then partition all of the data into n number of ```map[string]interface{}``` instances, enabling multiple concurrent writes to both the data in memory and on disk.
-
 1. Implement cache population with existing data on start-up.  Currently, it does not yet load the persisted data from disk on start-up.  The plan is to implement the functionality such that the cache is pre-populated with the most recent record from each key on start-up by reading all of the data in the output directory.
 
-1. Rotate the output files based on size or number of records. The ```Serializers``` do not yet do any size or record based rotation on the output files.
+1. Rotate the output files based on size or number of records. The `Persisters` do not yet do any file rotation.
 
-1. Remove the avro serialization in lieu of serializing ```map[string]interface{}``` data as JSON; one JSON record per line.
 ## Performance
 
 There is nothing particularly complicated about the program and it should not require any special hardware.  The following stats were gleaned from running on the following system:
@@ -37,11 +34,7 @@ With the following test:
 - 40 writers, each writing 2400 records at 1 record per millisecond
 - 40 readers, each reading every 2 milliseconds
 
-Writes per milli=1.663432
-Reads per milli=17.232257
-Read stats in milliseconds: min=9.3e-05, mean=0.01755602376083348, max=79.856252
-Write stats in milliseconds: min=0.000502, mean=0.5762599500411977, max=113.28934
-Total reads=994508, writes=96000
+Writes/s=2232.558140, Reads/s=18090.348837
 
 I would like to see this data as a histogram to see the percentile distribution but just went with the simple thing first to get an idea of how it would perform.
 
@@ -53,5 +46,5 @@ Currently, it will leave the data in the ```/var/tmp/inmemdatastore-inttest``` f
 
 1. Change dirs into the integration_tests dir and execute the tests.
     ```
-    cd integration_tests/ && go test -count=1 -v -tags=integration ./...
+    cd integration_tests/ && INTEGRATION=1 go test -count=1 -v ./...
     ```

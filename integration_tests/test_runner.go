@@ -1,10 +1,9 @@
-//go:build integration
-
 package inttest
 
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/rchapin/go-in-mem-datastore/inmemdatastore"
 	log "github.com/rchapin/rlog"
@@ -23,68 +22,72 @@ const (
 )
 
 type TRConfig struct {
-	ctx    context.Context
-	cancel context.CancelFunc
 	// The mode in which the test is to run
 	mode Mode
-
 	// Specific records that each writer, by its id number, should attempt to write to the IMDS.
 	specificRecords map[int][]map[string]interface{}
+	// The number of Datastore shards
+	numDatastoreShards int
 	// The size of the IMDS serialization channel buffer size that we should pass into the IMDS.
-	serializationChanBufSize int
+	persistenceChanBuffSize int
 	// Then number of Serializers to be passed to the IMDS.
-	numSerializers int
+	numPersisters int
 	// The number of Writers that we will instantiate and kick-off to write to the IMDS.
-	numWriters int
+	numTestWriters int
 	// The number of records that each Writer will write before shutting down.
-	numWriterWrites int
+	numTestWriterWrites int
 	// The amount of time in milliseconds that the Writers will sleep between writes.
-	writersSleepTime int64
+	testWriterSleepTime int64
 	// The number of Readers that we will instantiate and kick-off to read from the IMDS.
-	numReaders int
+	numTestReaders int
 	// The amount of time in milliseconds that the Readers will sleep between reads.
-	readersSleepTime int64
+	testReaderSleepTime int64
 	// The avro schema, in "raw" string form that we will pass to the IMDS.
 	schema string
-	wg     *sync.WaitGroup
 	// The directory into which we will tell the IMDS to write its data files
 	outputDirPath string
 	// The keys that we expect to be written to the datastore.  We will provide these to all of the
-	// readers so that they can randomly query the datastor for records.
+	// readers so that they can randomly query the datastore for records.
 	keySpace []string
+	// The number of double and string fields for which we need to generate test data based on the
+	// structure of the test avro schema.
+	numDblFields int
+	numStrFields int
 }
 
 type TestRunner struct {
-	cfg      TRConfig
-	imds     *inmemdatastore.InMemDataStore
-	writers  map[int]*Writer
-	readers  map[int]*Reader
-	readerWg *sync.WaitGroup
+	ctx       context.Context
+	cancel    context.CancelFunc
+	wg        *sync.WaitGroup
+	cfg       TRConfig
+	imdsWg    *sync.WaitGroup
+	imds      *inmemdatastore.InMemDataStore
+	writers   map[int]*Writer
+	readers   map[int]*Reader
+	readerWg  *sync.WaitGroup
+	StartTime int64
+	EndTime   int64
 }
 
-func NewTestRunner(cfg TRConfig) *TestRunner {
+func NewTestRunner(ctx context.Context, cancel context.CancelFunc, wg *sync.WaitGroup, cfg TRConfig) *TestRunner {
+	imdsWg := &sync.WaitGroup{}
 	retval := &TestRunner{
+		ctx:      ctx,
+		cancel:   cancel,
+		wg:       wg,
 		cfg:      cfg,
 		writers:  make(map[int]*Writer),
 		readers:  make(map[int]*Reader),
 		readerWg: &sync.WaitGroup{},
+		imdsWg:   imdsWg,
 	}
+	retval.imds = initTestOut(ctx, cancel, cfg, imdsWg)
 	return retval
 }
 
 func (tr *TestRunner) RunTest() {
-	IMDSCfg := inmemdatastore.Config{
-		Ctx:                      tr.cfg.ctx,
-		Cancel:                   tr.cfg.cancel,
-		SerializationChanBufSize: tr.cfg.serializationChanBufSize,
-		NumSerializers:           tr.cfg.numSerializers,
-		Schema:                   tr.cfg.schema,
-		OutputDirPath:            tr.cfg.outputDirPath,
-	}
-	IMDS := inmemdatastore.NewInMemDatastore(IMDSCfg)
-	tr.imds = IMDS
+	tr.StartTime = time.Now().UTC().Unix()
 	tr.imds.Start()
-
 	tr.startReaders()
 	switch tr.cfg.mode {
 	case SpecificRecords:
@@ -92,6 +95,12 @@ func (tr *TestRunner) RunTest() {
 	case LimitedKeySpace:
 		tr.execLimitedKeySpaceTest()
 	}
+
+	tr.wg.Wait()
+	log.Info("TestRunner complete")
+	tr.EndTime = time.Now().UTC().Unix()
+	tr.imds.Shutdown()
+	tr.imdsWg.Wait()
 }
 
 func (tr *TestRunner) execSpecificRecordsTest() {
@@ -103,11 +112,13 @@ func (tr *TestRunner) execSpecificRecordsTest() {
 			workerCfg: WorkerConfig{
 				Id:   wrkrId,
 				IMDS: tr.imds,
-				Wg:   tr.cfg.wg,
+				Wg:   tr.wg,
 			},
 			mode:            tr.cfg.mode,
 			SpecificRecords: records,
-			sleepTime:       tr.cfg.writersSleepTime,
+			sleepTime:       tr.cfg.testWriterSleepTime,
+			numDblFields:    tr.cfg.numDblFields,
+			numStrFields:    tr.cfg.numStrFields,
 		}
 		writer := NewWriter(writerCfg)
 		tr.writers[wrkrId] = writer
@@ -117,27 +128,29 @@ func (tr *TestRunner) execSpecificRecordsTest() {
 
 	// Wait on what amounts to the writers to finish writing and then call cancel.
 	// That will cause the IMDS to cancel and begin the shutdown process.
-	tr.cfg.wg.Wait()
-	tr.cfg.cancel()
+	tr.wg.Wait()
+	tr.cancel()
 	tr.readerWg.Wait()
 }
 
 func (tr *TestRunner) execLimitedKeySpaceTest() {
 	log.Info("Executing limited key space test")
 
-	for i := 0; i < tr.cfg.numWriters; i++ {
+	for i := 0; i < tr.cfg.numTestWriters; i++ {
 		// Create WriterConfigs for them to write to a random set of keys with randomly generated
 		// data.
 		writerCfg := WriterConfig{
 			workerCfg: WorkerConfig{
 				Id:       i,
 				IMDS:     tr.imds,
-				Wg:       tr.cfg.wg,
+				Wg:       tr.wg,
 				KeySpace: tr.cfg.keySpace,
 			},
-			mode:      tr.cfg.mode,
-			sleepTime: tr.cfg.writersSleepTime,
-			numWrites: tr.cfg.numWriterWrites,
+			mode:         tr.cfg.mode,
+			sleepTime:    tr.cfg.testWriterSleepTime,
+			numWrites:    tr.cfg.numTestWriterWrites,
+			numDblFields: tr.cfg.numDblFields,
+			numStrFields: tr.cfg.numStrFields,
 		}
 		writer := NewWriter(writerCfg)
 		tr.writers[i] = writer
@@ -147,13 +160,46 @@ func (tr *TestRunner) execLimitedKeySpaceTest() {
 
 	// Wait on what amounts to the writers to finish writing and then call cancel.
 	// That will cause the IMDS to cancel and begin the shutdown process.
-	tr.cfg.wg.Wait()
-	tr.cfg.cancel()
+	tr.wg.Wait()
+	tr.cancel()
 	tr.readerWg.Wait()
 }
 
+func initTestOut(ctx context.Context, cancel context.CancelFunc, cfg TRConfig, imdsWg *sync.WaitGroup) *inmemdatastore.InMemDataStore {
+	persisters := make(map[int]*inmemdatastore.Persister)
+	persistanceChanBuffSize := 1024
+	persistenceChan := make(inmemdatastore.PersistenceChan, persistanceChanBuffSize)
+
+	for i := 0; i < cfg.numPersisters; i++ {
+		serializer := inmemdatastore.NewNoopSerializer()
+		avroWriterCfg := inmemdatastore.AvroFileWriterConfig{
+			Id:         i,
+			AvroSchema: cfg.schema,
+			OutputDir:  cfg.outputDirPath,
+		}
+		avroFileWriter := inmemdatastore.NewAvroFileWriter(ctx, imdsWg, avroWriterCfg)
+		persisterConfig := inmemdatastore.PersisterConfig{
+			Id:         i,
+			Serializer: serializer,
+			Writer:     avroFileWriter,
+			InputChan:  persistenceChan,
+		}
+		persister := inmemdatastore.NewPersister(ctx, imdsWg, persisterConfig)
+		persisters[i] = persister
+	}
+
+	imdsCfg := inmemdatastore.Config{
+		NumDatastoreShards: cfg.numDatastoreShards,
+		PersistenceChan:    persistenceChan,
+		RecordTimestampKey: recordTimestampKey,
+		Persisters:         persisters,
+	}
+	log.Info(imdsCfg)
+	return inmemdatastore.NewInMemDatastore(ctx, cancel, imdsWg, imdsCfg)
+}
+
 func (tr *TestRunner) startReaders() {
-	for i := 0; i < tr.cfg.numReaders; i++ {
+	for i := 0; i < tr.cfg.numTestReaders; i++ {
 		readerCfg := ReaderConfig{
 			workerCfg: WorkerConfig{
 				Id:       i,
@@ -161,8 +207,8 @@ func (tr *TestRunner) startReaders() {
 				Wg:       tr.readerWg,
 				KeySpace: tr.cfg.keySpace,
 			},
-			sleepTime: tr.cfg.readersSleepTime,
-			ctx:       tr.cfg.ctx,
+			sleepTime: tr.cfg.testReaderSleepTime,
+			ctx:       tr.ctx,
 		}
 		reader := NewReader(readerCfg)
 		tr.readers[i] = reader

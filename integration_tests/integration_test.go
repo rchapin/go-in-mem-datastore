@@ -1,193 +1,33 @@
-//go:build integration
-
 package inttest
 
 import (
-	"bufio"
-	"crypto/sha512"
+	"context"
 	"fmt"
-	"io/ioutil"
-	"math/rand"
 	"os"
-	"path/filepath"
-	"strconv"
-	"strings"
+	"os/signal"
+	"syscall"
 	"testing"
-	"time"
 
-	"github.com/linkedin/goavro"
 	"github.com/rchapin/go-in-mem-datastore/inmemdatastore"
 	"github.com/rchapin/go-in-mem-datastore/utils"
 	log "github.com/rchapin/rlog"
 	"github.com/stretchr/testify/assert"
 )
 
-type RecordSpec struct {
-	Id             string
-	CollectionTime int64
-}
-
-var (
-	maxFloat = float64(1 << 64)
-	minFloat = float64(0.01)
-	maxInt   = int(1 << 62)
-	minInt   = int(1)
-)
-
 var rm *ResourceManager
 
-// Utility functions -----------------------------------------------------------
-
-func generateAvroRecord(recSpec RecordSpec) map[string]interface{} {
-	retval := map[string]interface{}{}
-	// retval[avroFieldId] = fmt.Sprintf("%s%d", idPrefix, recordSpec)
-	retval[avroFieldId] = recSpec.Id
-	retval[avroFieldCollectionTime] = recSpec.CollectionTime
-
-	// Dynamically generate N number of values for all of the metricdbl fields in the schema.
-	for j := 1; j <= rm.avroNumMetricDblFields; j++ {
-		retval[fmt.Sprintf("%s%d", metricDblPrefix, j)] = getRandomFloat()
-	}
-	// Dynamically generate N number of values for all of the metricstr fields in the schema.
-	for j := 1; j <= rm.avroNumMetricStrFields; j++ {
-		retval[fmt.Sprintf("%s%d", metricStrPrefix, j)] = getRandomString()
-	}
-
-	return retval
-}
-
-func generateAvroRecords(numRecords int) []map[string]interface{} {
-	retval := []map[string]interface{}{}
-	for i := 0; i < numRecords; i++ {
-		recSpec := RecordSpec{
-			Id:             fmt.Sprintf("%s%d", idPrefix, i),
-			CollectionTime: time.Now().UnixNano(),
-		}
-		retval = append(retval, generateAvroRecord(recSpec))
-	}
-	return retval
-}
-
-func generateRecordsFromRecordSpecs(recSpecs []RecordSpec) []map[string]interface{} {
-	retval := []map[string]interface{}{}
-	for _, recSpec := range recSpecs {
-		retval = append(retval, generateAvroRecord(recSpec))
-	}
-	return retval
-}
-
-func getKeySetFromExpectedRecSpecs(recSpecs []RecordSpec) map[string]bool {
-	// Generate a set of keys, composed of the id and collection_time values.
-	keySet := map[string]bool{}
-	for _, r := range recSpecs {
-		key := fmt.Sprintf("%s_%d", r.Id, r.CollectionTime)
-		keySet[key] = true
-	}
-	return keySet
-}
-
-func getRandomFloat() float64 {
-	return minFloat + rand.Float64()*(maxFloat-minFloat)
-}
-
-func getRandomInt(min, max int) int {
-	// return int(min) + rand.Int()*(max-min)
-	return rand.Intn(max-min) + min
-}
-
-func getRandomString() string {
-	num := getRandomInt(minInt, maxInt)
-	data := []byte(strconv.Itoa(num))
-	hash := sha512.Sum512(data)
-	str := fmt.Sprintf("%x", hash[:])
-
-	// Because we just need some data to bulk up our avro record we'll concatenate our hex value
-	// with itself.
-	var sb strings.Builder
-	for i := 0; i < randomStringGenIterations; i++ {
-		sb.WriteString(str)
-	}
-
-	return sb.String()
-}
-
-// loadAllAvroRecords will load all of the avro records from the data output dir and returns the
-// data as well as the count of all of the records found.
-func loadAllAvroRecords(justCounts bool) ([]map[string]interface{}, int64) {
-	files, err := ioutil.ReadDir(rm.testDirs[dirData])
-	if err != nil {
-		panic(err)
-	}
-	data := []map[string]interface{}{}
-	var count int64
-	for _, file := range files {
-		recs, curCount := loadAvroRecords(filepath.Join(rm.testDirs[dirData], file.Name()), justCounts)
-		count += curCount
-		if !justCounts {
-			data = append(data, recs...)
-		}
-		log.Infof("Loaded %d total avro records", count)
-	}
-	return data, count
-}
-
-func loadAvroRecords(filepath string, justCounts bool) ([]map[string]interface{}, int64) {
-	data := []map[string]interface{}{}
-	count := int64(0)
-	fh, err := os.Open(filepath)
-	if err != nil {
-		panic(err)
-	}
-	defer fh.Close()
-	br := bufio.NewReader(fh)
-	ocfr, err := goavro.NewOCFReader(br)
-	if err != nil {
-		panic(err)
-	}
-	for ocfr.Scan() {
-		datum, err := ocfr.Read()
-		if err != nil {
-			panic(err)
-		}
-		count++
-		if !justCounts {
-			m := datum.(map[string]interface{})
-			data = append(data, m)
-		}
-		if count%2000 == 0 {
-			log.Infof("Loaded %d avro records from file=%s", count, filepath)
-		}
-	}
-	return data, count
-}
-
-func readFile(path string) string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		panic(err)
-	}
-	return string(data)
-}
-
-func writeTestAvroFile(records []map[string]interface{}) {
-	// FIXME: pass in file name
-	filePath := filepath.Join(rm.testParentDirPath, "test.avro")
-	file, err := os.Create(filePath)
-	if err != nil {
-		panic(err)
-	}
-	defer file.Close()
-	ocfw, err := goavro.NewOCFWriter(goavro.OCFConfig{
-		W:     file,
-		Codec: rm.codec,
-	})
-	err = ocfw.Append(records)
-	if err != nil {
-		panic(err)
-	}
-}
-
 // Setup and Teardown functions ------------------------------------------------
+
+func setupSignalHandler(cancel context.CancelFunc) {
+	c := make(chan os.Signal)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		signal := <-c
+		fmt.Printf("Received shutdown signal; signal=%+v\n", signal)
+		cancel()
+		// os.Exit(0)
+	}()
+}
 
 func setUpTest() {
 	rm = NewResourceManager(testParentDir)
@@ -199,14 +39,15 @@ func setUpSubTest() {
 }
 
 func TestMain(m *testing.M) {
+	if os.Getenv("INTEGRATION") == "" {
+		fmt.Printf("Skipping integration tests.  To run set env var INTEGRATION=1")
+		return
+	}
+
 	utils.SetupLogging("info")
-
-	// Set up a random seed a single time for all of the tests
-	rand.Seed(time.Now().UTC().UnixNano())
-
 	log.Info("From integration test TestMain")
 	setUpTest()
-	// setupSignalHandler(rm.ctxTest, rm.cancelTest)
+	setupSignalHandler(rm.tCancel)
 	runExitCode := m.Run()
 	log.Info("Integration tests complete")
 	os.Exit(runExitCode)
@@ -258,13 +99,12 @@ func TestWriteRecords(t *testing.T) {
 		CollectionTime: startTimestamp + 110,
 	}
 	writer2RecSpecs := []RecordSpec{record2A, record2B, record2C}
+	writer1Records := generateRecordsFromRecordSpecs(writer1RecSpecs, rm.avroNumMetricDblFields, rm.avroNumMetricStrFields)
+	writer2Records := generateRecordsFromRecordSpecs(writer2RecSpecs, rm.avroNumMetricDblFields, rm.avroNumMetricStrFields)
 
-	writer1Records := generateRecordsFromRecordSpecs(writer1RecSpecs)
-	writer2Records := generateRecordsFromRecordSpecs(writer2RecSpecs)
-
-	// Generate a map that is keyed by the writer id and includes the records that are programming each writer to
-	// write to the IMDS.
-	testRecords := map[int][]map[string]interface{}{}
+	// Generate a map that is keyed by the writer id and includes the records that we are
+	// programming each writer to write to the IMDS.
+	testRecords := make(map[int][]map[string]interface{})
 	testRecords[0] = writer1Records
 	testRecords[1] = writer2Records
 
@@ -280,28 +120,27 @@ func TestWriteRecords(t *testing.T) {
 
 	// Build a configuration for our test runner to be able to execute the test
 	trCfg := TRConfig{
-		ctx:                      rm.appCtx,
-		cancel:                   rm.appCancel,
-		mode:                     SpecificRecords,
-		specificRecords:          testRecords,
-		serializationChanBufSize: 1024,
-		writersSleepTime:         2,
-		numSerializers:           2,
-		numReaders:               20,
-		readersSleepTime:         5,
-		schema:                   rm.avroString,
-		wg:                       rm.wg,
-		outputDirPath:            rm.testDirs[dirData],
-		keySpace:                 keySpace,
+		mode:                    SpecificRecords,
+		specificRecords:         testRecords,
+		persistenceChanBuffSize: 1024,
+		testWriterSleepTime:     2,
+		numPersisters:           2,
+		numDatastoreShards:      2,
+		numTestReaders:          20,
+		testReaderSleepTime:     5,
+		schema:                  rm.avroSchemaString,
+		outputDirPath:           rm.testDirs[dirData],
+		keySpace:                keySpace,
+		numDblFields:            rm.avroNumMetricDblFields,
+		numStrFields:            rm.avroNumMetricStrFields,
 	}
-	tr := NewTestRunner(trCfg)
+	tr := NewTestRunner(rm.testRunnerCtx, rm.testRunnerCancel, rm.testRunnerWg, trCfg)
 	tr.RunTest()
-	rm.wg.Wait()
-	log.Info("TestRunner complete")
-	tr.imds.Shutdown()
 
 	validatePersistedData(t, tr.imds, expectedPersistedRecSpecs)
 	validateCachedData(t, tr.imds, expectedCachedRecSpecs)
+	validateShardKeys(t, tr.imds)
+	printStats(tr)
 }
 
 func TestPerformance(t *testing.T) {
@@ -309,44 +148,57 @@ func TestPerformance(t *testing.T) {
 	setUpSubTest()
 
 	// For this test we will generate a set key space for the records that we will generate and for
-	// which we will run queries.  We will generate 100 different keys.
-	numKeys := 200
-	keySpace := make([]string, numKeys)
-	for i := 0; i < numKeys; i++ {
+	// which we will run queries.
+	keySpace := make([]string, rm.perfConfig.numTestKeys)
+	for i := 0; i < rm.perfConfig.numTestKeys; i++ {
 		keySpace[i] = fmt.Sprintf("%s%d", idPrefix, i)
 	}
 
-	numWriters := 40
-	numWriterWrites := 2400
 	// Build a configuration for our test runner to be able to execute the test
 	trCfg := TRConfig{
-		ctx:                      rm.appCtx,
-		cancel:                   rm.appCancel,
-		mode:                     LimitedKeySpace,
-		serializationChanBufSize: 2048,
-		numSerializers:           16,
-		numReaders:               40,
-		readersSleepTime:         2,
-		numWriters:               numWriters,
-		numWriterWrites:          numWriterWrites,
-		writersSleepTime:         1,
-		schema:                   rm.avroString,
-		wg:                       rm.wg,
-		outputDirPath:            rm.testDirs[dirData],
-		keySpace:                 keySpace,
+		mode:                    LimitedKeySpace,
+		persistenceChanBuffSize: rm.perfConfig.serializerChanBuffSize,
+		numPersisters:           rm.perfConfig.numSerializers,
+		numTestReaders:          rm.perfConfig.numReaders,
+		numDatastoreShards:      rm.perfConfig.datastoreShards,
+		testReaderSleepTime:     rm.perfConfig.readerSleepTime,
+		numTestWriters:          rm.perfConfig.numWriters,
+		numTestWriterWrites:     rm.perfConfig.numWritesPerWriter,
+		testWriterSleepTime:     rm.perfConfig.writerSleepTime,
+		schema:                  rm.avroSchemaString,
+		outputDirPath:           rm.testDirs[dirData],
+		keySpace:                keySpace,
+		numDblFields:            rm.avroNumMetricDblFields,
+		numStrFields:            rm.avroNumMetricStrFields,
 	}
-	tr := NewTestRunner(trCfg)
+	tr := NewTestRunner(rm.testRunnerCtx, rm.testRunnerCancel, rm.testRunnerWg, trCfg)
 	tr.RunTest()
-	rm.wg.Wait()
-	log.Info("TestRunner complete")
-	tr.imds.Shutdown()
 
-	_, recCounts := loadAllAvroRecords(true)
-	assert.Equal(t, int64(numWriters*numWriterWrites), recCounts)
+	_, recCounts := loadAllAvroRecords(rm.testDirs[dirData], true)
+	expectedWrites := int64(rm.perfConfig.numWriters * rm.perfConfig.numWritesPerWriter)
+	assert.Equal(t, expectedWrites, recCounts)
+
+	validateShardKeys(t, tr.imds)
+	printStats(tr)
+}
+
+func printStats(tr *TestRunner) {
+	// Aggregate the total number of reads and writes across all of the Datastore instances.
+	var totalReads int64
+	var totalWrites int64
+	for _, datastore := range tr.imds.GetDatastores() {
+		totalReads += datastore.NumReads
+		totalWrites += datastore.NumWrites
+	}
+
+	duration := tr.EndTime - tr.StartTime
+	writeRate := float64(totalWrites) / float64(duration)
+	readRate := float64(totalReads) / float64(duration)
+	log.Infof("Writes/s=%f, Reads/s=%f", writeRate, readRate)
 }
 
 func validatePersistedData(t *testing.T, IMDS *inmemdatastore.InMemDataStore, expectedRecSpecs []RecordSpec) {
-	actualRecords, _ := loadAllAvroRecords(false)
+	actualRecords, _ := loadAllAvroRecords(rm.testDirs[dirData], false)
 	assert.Equal(t, len(expectedRecSpecs), len(actualRecords))
 
 	// Now we need to build a "set" that contains a key for each of the records that we expect to
@@ -363,6 +215,7 @@ func validatePersistedData(t *testing.T, IMDS *inmemdatastore.InMemDataStore, ex
 }
 
 func validateCachedData(t *testing.T, IMDS *inmemdatastore.InMemDataStore, recSpecs []RecordSpec) {
+	// Validate that the cache contains all of the expected records
 	datastore := IMDS.GetAll()
 	assert.Equal(t, len(recSpecs), len(datastore))
 	keySet := getKeySetFromExpectedRecSpecs(recSpecs)
@@ -372,6 +225,46 @@ func validateCachedData(t *testing.T, IMDS *inmemdatastore.InMemDataStore, recSp
 		checkForKey(t, keySet, key)
 	}
 	assert.True(t, len(keySet) == 0)
+}
+
+func validateShardKeys(t *testing.T, IMDS *inmemdatastore.InMemDataStore) {
+	// Validate that each of the shards in the datastore contain a unique set of keys
+	datastores := IMDS.GetDatastores()
+	dsKeysByDatastoreId := make(map[uint64]map[string]bool, len(datastores))
+	for datastoreId, datastore := range datastores {
+		data := datastore.Data
+		for k := range data {
+			dsKeys, ok := dsKeysByDatastoreId[datastoreId]
+			if !ok {
+				dsKeys = make(map[string]bool)
+				dsKeysByDatastoreId[datastoreId] = dsKeys
+			}
+			dsKeys[k] = true
+		}
+	}
+
+	numKeys := uint64(len(dsKeysByDatastoreId))
+	for i := uint64(0); i < numKeys; i++ {
+		// If this is the last set of keys in the dsKeysByDatastoreId map and we have not
+		// encountered an assertion failure, we can break.  We have already checked all of the
+		// other maps against this one and not found any duplicate keys.
+		if i+1 == numKeys {
+			break
+		}
+		currMap := dsKeysByDatastoreId[i]
+
+		// For each of the remaining sets of keys in the dsKeysByDatastoreId map, we need to check
+		// that none of the keys in the current map are present.
+		for j := i + 1; j < numKeys; j++ {
+			nextMap := dsKeysByDatastoreId[j]
+			for currKey := range currMap {
+				for nextMapKey := range nextMap {
+					assert.NotEqualValues(t, currKey, nextMapKey)
+				}
+			}
+		}
+		delete(dsKeysByDatastoreId, i)
+	}
 }
 
 func checkForKey(t *testing.T, keySet map[string]bool, actualKey string) {

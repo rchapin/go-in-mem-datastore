@@ -1,5 +1,3 @@
-//go:build integration
-
 package inttest
 
 import (
@@ -42,8 +40,11 @@ func (r *Reader) Run() {
 			case tm := <-ticker.C:
 				log.Debugf("Timer triggered, executing query against datastore, tm=%+v", tm)
 				key := r.worker.getRandomKey()
-				_, ok := r.worker.imds.Get(key)
-				if ok {
+				rec, err := r.worker.imds.Get(key)
+				if err != nil {
+					panic(err)
+				}
+				if rec != nil {
 					log.Debugf("cache hit with key=%s", key)
 				} else {
 					log.Debugf("cache miss with key=%s", key)
