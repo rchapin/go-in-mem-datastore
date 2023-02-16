@@ -173,9 +173,8 @@ func initTestOut(ctx context.Context, cancel context.CancelFunc, cfg TRConfig, i
 	for i := 0; i < cfg.numPersisters; i++ {
 		serializer := inmemdatastore.NewNoopSerializer()
 		avroWriterCfg := inmemdatastore.AvroFileWriterConfig{
-			Id:         i,
+			WriterCfg:  inmemdatastore.WriterCfg{Id: i, OutputDir: cfg.outputDirPath},
 			AvroSchema: cfg.schema,
-			OutputDir:  cfg.outputDirPath,
 		}
 		avroFileWriter := inmemdatastore.NewAvroFileWriter(ctx, imdsWg, avroWriterCfg)
 		persisterConfig := inmemdatastore.PersisterConfig{
@@ -188,11 +187,21 @@ func initTestOut(ctx context.Context, cancel context.CancelFunc, cfg TRConfig, i
 		persisters[i] = persister
 	}
 
+	// Create additional persister and channel
+	aCfg := inmemdatastore.AvroFileWriterConfig{
+		WriterCfg:  inmemdatastore.WriterCfg{Id: 0, OutputDir: cfg.outputDirPath, FileNameSuffix: "cache"},
+		AvroSchema: cfg.schema,
+	}
+	log.Info(aCfg)
+
 	imdsCfg := inmemdatastore.Config{
 		NumDatastoreShards: cfg.numDatastoreShards,
-		PersistenceChan:    persistenceChan,
 		RecordTimestampKey: recordTimestampKey,
+		PersistenceChan:    persistenceChan,
 		Persisters:         persisters,
+		// Additional Persister instance and a shutdown channel
+		// Persister needs to have an optional file name added to it
+		// into which that Persister will write the saved cache data
 	}
 	log.Info(imdsCfg)
 	return inmemdatastore.NewInMemDatastore(ctx, cancel, imdsWg, imdsCfg)

@@ -16,6 +16,12 @@ type Writer interface {
 	Shutdown()
 }
 
+type WriterCfg struct {
+	Id             int
+	OutputDir      string
+	FileNameSuffix string
+}
+
 type AvroFileWriter struct {
 	ctx            context.Context
 	wg             *sync.WaitGroup
@@ -30,9 +36,8 @@ type AvroFileWriter struct {
 }
 
 type AvroFileWriterConfig struct {
-	Id         int
+	WriterCfg
 	AvroSchema string
-	OutputDir  string
 }
 
 func NewAvroFileWriter(ctx context.Context, wg *sync.WaitGroup, cfg AvroFileWriterConfig) *AvroFileWriter {

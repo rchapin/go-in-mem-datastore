@@ -59,6 +59,11 @@ type InMemDataStore struct {
 	persisterCtx       context.Context
 	persisterCancel    context.CancelFunc
 	persistenceChan    PersistenceChan
+	// A singleton Persister that will be used to serialize all of the data in the cache on
+	// Shutdown.
+	CachePersister Persister
+	// A channel from which the cachePersister will read all of the records in the cache.
+	CachePersisterChan PersistenceChan
 }
 
 func NewInMemDatastore(ctx context.Context, cancel context.CancelFunc, wg *sync.WaitGroup, cfg Config) *InMemDataStore {
@@ -113,6 +118,12 @@ func (ds *InMemDataStore) GetAll() map[string]interface{} {
 
 func (ds *InMemDataStore) GetDatastores() Datastores {
 	return ds.datastores
+}
+
+func (ds *InMemDataStore) persistCache() {
+	ds.wg.Add(1)
+	
+
 }
 
 func (ds *InMemDataStore) Put(key string, val map[string]interface{}) error {
@@ -176,7 +187,8 @@ func (ds *InMemDataStore) Start() {
 func (ds *InMemDataStore) Shutdown() {
 	log.Info("Shutdown command received, shutting down serializers")
 	ds.persisterCancel()
-	log.Info("Waiting for serializers to finish shutting down")
+	ds.persistCache()
+	log.Info("Waiting for all persisters to finish shutting down")
 	ds.wg.Wait()
 	log.Info("Shutdown complete")
 }
