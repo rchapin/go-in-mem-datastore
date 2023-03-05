@@ -17,10 +17,27 @@ type Writer interface {
 }
 
 type WriterCfg struct {
-	Id             int
-	OutputDir      string
-	FileNameSuffix string
+	Id               int
+	OutputDir        string
+	// Instead of creating a file name that is simply the id of the writer and the specific
+	// file extension,
+	FileNameOverride string
 }
+
+func CreateFileName(id int, fileNameExtension, fileNameOverride string) string {
+	var retval string
+	if fileNameOverride != "" {
+		retval = fmt.Sprintf("%s.%s", fileNameOverride, fileNameExtension)
+	} else {
+		retval = fmt.Sprintf("%d.%s", id, fileNameExtension)
+	}
+	return retval
+}
+
+// Since there is currently one a single implementation of the Writer interface we will just keep
+// all of this code in a single file.
+
+const avroFileExt = "avro"
 
 type AvroFileWriter struct {
 	ctx            context.Context
@@ -41,7 +58,7 @@ type AvroFileWriterConfig struct {
 }
 
 func NewAvroFileWriter(ctx context.Context, wg *sync.WaitGroup, cfg AvroFileWriterConfig) *AvroFileWriter {
-	fileName := fmt.Sprintf("%d.avro", cfg.Id)
+	fileName := CreateFileName(cfg.Id, avroFileExt, cfg.FileNameOverride)
 	retval := &AvroFileWriter{
 		ctx:            ctx,
 		wg:             wg,

@@ -166,6 +166,9 @@ func (tr *TestRunner) execLimitedKeySpaceTest() {
 }
 
 func initTestOut(ctx context.Context, cancel context.CancelFunc, cfg TRConfig, imdsWg *sync.WaitGroup) *inmemdatastore.InMemDataStore {
+	// Setup and instantiate all of the dependencies to be injected into the InMemDatastore. In
+	// order to alleviate a bunch of boilerplate for actual clients of the library we could write a
+	// helper method to DRY it out a bit.
 	persisters := make(map[int]*inmemdatastore.Persister)
 	persistanceChanBuffSize := 1024
 	persistenceChan := make(inmemdatastore.PersistenceChan, persistanceChanBuffSize)
@@ -178,10 +181,11 @@ func initTestOut(ctx context.Context, cancel context.CancelFunc, cfg TRConfig, i
 		avroFileWriter := inmemdatastore.NewAvroFileWriter(ctx, imdsWg, avroWriterCfg)
 		serializer := inmemdatastore.NewNoopSerializer()
 		persisterConfig := inmemdatastore.PersisterConfig{
-			Id:         i,
-			Serializer: serializer,
-			Writer:     avroFileWriter,
-			InputChan:  persistenceChan,
+			Id:            i,
+			Serializer:    serializer,
+			Writer:        avroFileWriter,
+			InputChan:     persistenceChan,
+			PersisterType: inmemdatastore.Std,
 		}
 		persister := inmemdatastore.NewPersister(ctx, imdsWg, persisterConfig)
 		persisters[i] = persister
@@ -190,16 +194,17 @@ func initTestOut(ctx context.Context, cancel context.CancelFunc, cfg TRConfig, i
 	// Create the cache persister and channel
 	cachePersisterChan := make(inmemdatastore.PersistenceChan, persistanceChanBuffSize)
 	cachePersisterAvroWriterCfg := inmemdatastore.AvroFileWriterConfig{
-		WriterCfg:  inmemdatastore.WriterCfg{Id: 0, OutputDir: cfg.outputDirPath, FileNameSuffix: "cache"},
+		WriterCfg:  inmemdatastore.WriterCfg{Id: 0, OutputDir: cfg.outputDirPath, FileNameOverride: "cache"},
 		AvroSchema: cfg.schema,
 	}
 	cachePersisterSerializer := inmemdatastore.NewNoopSerializer()
 	cachePersisterAvroFileWriter := inmemdatastore.NewAvroFileWriter(ctx, imdsWg, cachePersisterAvroWriterCfg)
 	persisterConfig := inmemdatastore.PersisterConfig{
-		Id:         1,
-		Serializer: cachePersisterSerializer,
-		Writer:     cachePersisterAvroFileWriter,
-		InputChan:  cachePersisterChan,
+		Id:            1,
+		Serializer:    cachePersisterSerializer,
+		Writer:        cachePersisterAvroFileWriter,
+		InputChan:     cachePersisterChan,
+		PersisterType: inmemdatastore.Cache,
 	}
 	cachePersister := inmemdatastore.NewPersister(ctx, imdsWg, persisterConfig)
 

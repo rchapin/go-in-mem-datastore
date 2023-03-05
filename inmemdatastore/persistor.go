@@ -8,12 +8,11 @@ import (
 )
 
 type PersisterConfig struct {
-	Id             int
-	Serializer     Serializer
-	Writer         Writer
-	InputChan      PersistenceChan
-	// Optional suffix to be added to the file name
-	FileNameSuffix string
+	Id            int
+	Serializer    Serializer
+	Writer        Writer
+	InputChan     PersistenceChan
+	PersisterType PersisterType
 }
 
 type Persister struct {

@@ -19,13 +19,12 @@ var rm *ResourceManager
 // Setup and Teardown functions ------------------------------------------------
 
 func setupSignalHandler(cancel context.CancelFunc) {
-	c := make(chan os.Signal)
+	c := make(chan os.Signal, 8)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		signal := <-c
 		fmt.Printf("Received shutdown signal; signal=%+v\n", signal)
 		cancel()
-		// os.Exit(0)
 	}()
 }
 

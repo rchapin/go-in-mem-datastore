@@ -11,7 +11,15 @@ import (
 )
 
 const (
-	RecFieldId = "id"
+	RecFieldId             = "id"
+	PersistedCacheFileName = "cache"
+)
+
+type PersisterType int
+
+const (
+	Cache PersisterType = iota
+	Std
 )
 
 type (
@@ -125,6 +133,14 @@ func (ds *InMemDataStore) GetDatastores() Datastores {
 func (ds *InMemDataStore) persistCache() {
 	ds.wg.Add(1)
 	defer ds.wg.Done()
+
+	// We will fire up the CachePersister, iterate through the data in the cache, writing each
+	// element to the CachePersisterChan.  Once we have finished we will close the channel, cancel
+	// the CachePersister, and then wait for the CachePersister to finish consuming all of the
+	// messages and write them to disk.
+	ctx, cancel := context.WithCancel(ds.ctx)
+	print(ctx)
+	print(cancel)
 }
 
 func (ds *InMemDataStore) Put(key string, val map[string]interface{}) error {
