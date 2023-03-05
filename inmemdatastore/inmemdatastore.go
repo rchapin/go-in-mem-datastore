@@ -26,6 +26,8 @@ type (
 		// The top-level key in the map[string]interface{} records that will be stored in the
 		// InMemoryDataStore.  This is required for the Put method to process a new record.
 		RecordTimestampKey string
+		CachePersister     *Persister
+		CachePersisterChan PersistenceChan
 	}
 )
 
@@ -122,8 +124,7 @@ func (ds *InMemDataStore) GetDatastores() Datastores {
 
 func (ds *InMemDataStore) persistCache() {
 	ds.wg.Add(1)
-	
-
+	defer ds.wg.Done()
 }
 
 func (ds *InMemDataStore) Put(key string, val map[string]interface{}) error {
