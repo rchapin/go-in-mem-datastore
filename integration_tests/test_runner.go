@@ -45,7 +45,9 @@ type TRConfig struct {
 	// The avro schema, in "raw" string form that we will pass to the IMDS.
 	schema string
 	// The directory into which we will tell the IMDS to write its data files
-	outputDirPath string
+	dataOutputPath string
+	// The directory into which we will tell the IMDS to persist its cache data on shutdown
+	cacheOutputPath string
 	// The keys that we expect to be written to the datastore.  We will provide these to all of the
 	// readers so that they can randomly query the datastore for records.
 	keySpace []string
@@ -99,7 +101,8 @@ func (tr *TestRunner) RunTest() {
 	tr.wg.Wait()
 	log.Info("TestRunner complete")
 	tr.EndTime = time.Now().UTC().Unix()
-	tr.imds.Shutdown()
+	log.Info("Calling cancel to shutdown the InMemDatastore test instance")
+	tr.cancel()
 	tr.imdsWg.Wait()
 }
 
@@ -168,14 +171,14 @@ func (tr *TestRunner) execLimitedKeySpaceTest() {
 func initTestOut(ctx context.Context, cancel context.CancelFunc, cfg TRConfig, imdsWg *sync.WaitGroup) *inmemdatastore.InMemDataStore {
 	// Setup and instantiate all of the dependencies to be injected into the InMemDatastore. In
 	// order to alleviate a bunch of boilerplate for actual clients of the library we could write a
-	// helper method to DRY it out a bit.
+	// helper method to make this a bit less complicated.
 	persisters := make(map[int]*inmemdatastore.Persister)
 	persistanceChanBuffSize := 1024
 	persistenceChan := make(inmemdatastore.PersistenceChan, persistanceChanBuffSize)
 
 	for i := 0; i < cfg.numPersisters; i++ {
 		avroWriterCfg := inmemdatastore.AvroFileWriterConfig{
-			WriterCfg:  inmemdatastore.WriterCfg{Id: i, OutputDir: cfg.outputDirPath},
+			WriterCfg:  inmemdatastore.WriterCfg{Id: i, OutputDir: cfg.dataOutputPath},
 			AvroSchema: cfg.schema,
 		}
 		avroFileWriter := inmemdatastore.NewAvroFileWriter(ctx, imdsWg, avroWriterCfg)
@@ -192,21 +195,23 @@ func initTestOut(ctx context.Context, cancel context.CancelFunc, cfg TRConfig, i
 	}
 
 	// Create the cache persister and channel
+	// FIXME: figure out a better id for this, just for testing/debugging
+	cachePersisterId := 99
 	cachePersisterChan := make(inmemdatastore.PersistenceChan, persistanceChanBuffSize)
 	cachePersisterAvroWriterCfg := inmemdatastore.AvroFileWriterConfig{
-		WriterCfg:  inmemdatastore.WriterCfg{Id: 0, OutputDir: cfg.outputDirPath, FileNameOverride: "cache"},
+		WriterCfg:  inmemdatastore.WriterCfg{Id: cachePersisterId, OutputDir: cfg.dataOutputPath, FileNameOverride: "cache"},
 		AvroSchema: cfg.schema,
 	}
 	cachePersisterSerializer := inmemdatastore.NewNoopSerializer()
 	cachePersisterAvroFileWriter := inmemdatastore.NewAvroFileWriter(ctx, imdsWg, cachePersisterAvroWriterCfg)
-	persisterConfig := inmemdatastore.PersisterConfig{
-		Id:            1,
+	cachePersisterConfig := inmemdatastore.PersisterConfig{
+		Id:            cachePersisterId,
 		Serializer:    cachePersisterSerializer,
 		Writer:        cachePersisterAvroFileWriter,
 		InputChan:     cachePersisterChan,
 		PersisterType: inmemdatastore.Cache,
 	}
-	cachePersister := inmemdatastore.NewPersister(ctx, imdsWg, persisterConfig)
+	cachePersister := inmemdatastore.NewPersister(ctx, imdsWg, cachePersisterConfig)
 
 	imdsCfg := inmemdatastore.Config{
 		NumDatastoreShards: cfg.numDatastoreShards,
@@ -214,8 +219,6 @@ func initTestOut(ctx context.Context, cancel context.CancelFunc, cfg TRConfig, i
 		PersistenceChan:    persistenceChan,
 		Persisters:         persisters,
 		// Additional Persister instance and a shutdown channel
-		// Persister needs to have an optional file name added to it
-		// into which that Persister will write the saved cache data
 		CachePersister:     cachePersister,
 		CachePersisterChan: cachePersisterChan,
 	}

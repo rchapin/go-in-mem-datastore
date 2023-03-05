@@ -75,8 +75,8 @@ func NewAvroFileWriter(ctx context.Context, wg *sync.WaitGroup, cfg AvroFileWrit
 	}
 	retval.codec = codec
 
-	// For the time being we will just initialize our output file on instantiation and ignore that
-	// there might be any existing files in the output dir.
+	// FIXME: For the time being we will just initialize our output file on instantiation and ignore
+	// that there might be any existing files in the output dir.
 	retval.makeFile()
 
 	return retval

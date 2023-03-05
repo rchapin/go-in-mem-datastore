@@ -11,6 +11,7 @@ const (
 	recordIdKey             = "id"
 	recordTimestampKey      = "collection_time"
 	dirData                 = "data"
+	dirCache                = "cache"
 	// How many times are we going to concatenate the hex value that we generate from a random
 	// number in our integration_test.getRandomString() function
 	randomStringGenIterations = 16

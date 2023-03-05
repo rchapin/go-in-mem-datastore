@@ -37,6 +37,7 @@ type ResourceManager struct {
 	avroNumMetricStrFields int
 	testParentDirPath      string
 	testDataDirPath        string
+	testCacheDirPath       string
 	testDirs               map[string]string
 	perfConfig             *PerfConfigs
 }
@@ -64,7 +65,9 @@ func NewResourceManager(testParentDir string) *ResourceManager {
 	// directory.
 	testDirs := map[string]string{}
 	testDirs[dirData] = filepath.Join(testParentDir, dirData)
+	testDirs[dirCache] = filepath.Join(testParentDir, dirCache)
 	retval.testDataDirPath = testDirs[dirData]
+	retval.testCacheDirPath = testDirs[dirCache]
 	retval.testDirs = testDirs
 
 	// Load our avro definition file from disk and then generate both a "JSON"

@@ -66,22 +66,19 @@ type InMemDataStore struct {
 	recordTimestampKey string
 	persisters         Persisters
 	startTime          int64
-	persisterCtx       context.Context
-	persisterCancel    context.CancelFunc
 	persistenceChan    PersistenceChan
 	// A singleton Persister that will be used to serialize all of the data in the cache on
 	// Shutdown.
-	CachePersister Persister
+	cachePersister *Persister
 	// A channel from which the cachePersister will read all of the records in the cache.
-	CachePersisterChan PersistenceChan
+	cachePersisterChan PersistenceChan
 }
 
 func NewInMemDatastore(ctx context.Context, cancel context.CancelFunc, wg *sync.WaitGroup, cfg Config) *InMemDataStore {
-	// Create a separate context and cancelFunc pair that we will use to manage the Persisters.
-	// Otherwise, if the "parent" cancelFunc is invoked it will cancel both the IMDS and the
-	// Persisters and the IMDS will not be able to block and wait for the Persisters to cleanly
-	// close before exiting.
-	persisterCtx, persisterCancel := context.WithCancel(context.Background())
+	// // Create a separate context and cancelFunc pair that we will use to manage the Persisters.
+	// persisterCtx, persisterCancel := context.WithCancel(ctx)
+	// // Create another pair of context and cancelFunc to be used with the CachePersister.
+	// cachePersisterCtx, cachePersisterCancel := context.WithCancel(ctx)
 
 	retval := &InMemDataStore{
 		ctx:                ctx,
@@ -92,8 +89,8 @@ func NewInMemDatastore(ctx context.Context, cancel context.CancelFunc, wg *sync.
 		recordTimestampKey: cfg.RecordTimestampKey,
 		persisters:         cfg.Persisters,
 		persistenceChan:    cfg.PersistenceChan,
-		persisterCtx:       persisterCtx,
-		persisterCancel:    persisterCancel,
+		cachePersister:     cfg.CachePersister,
+		cachePersisterChan: cfg.CachePersisterChan,
 	}
 	for i := uint64(0); i < uint64(retval.numShards); i++ {
 		retval.datastores[i] = NewDatastore(i)
@@ -131,16 +128,20 @@ func (ds *InMemDataStore) GetDatastores() Datastores {
 }
 
 func (ds *InMemDataStore) persistCache() {
-	ds.wg.Add(1)
-	defer ds.wg.Done()
+	// FIXME: make the cancel time configurable with some sort of sane default.
+	// To ensure that our program will not hang forever we create a new context/cancel func pair
+	// giving it a timeout and then update the ctx in the CachePersister.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ds.cachePersister.setCtx(ctx)
+	defer cancel()
 
-	// We will fire up the CachePersister, iterate through the data in the cache, writing each
-	// element to the CachePersisterChan.  Once we have finished we will close the channel, cancel
-	// the CachePersister, and then wait for the CachePersister to finish consuming all of the
-	// messages and write them to disk.
-	ctx, cancel := context.WithCancel(ds.ctx)
-	print(ctx)
-	print(cancel)
+	// Fire up the CachePersister, and then dump all of the cache data to the CachePersisterChan
+	// waiting for it to finish or timeout.
+	log.Info("Waiting for the cache persister to complete")
+	ds.cachePersister.Run()
+	ds.writeCacheToCachePersisterChan()
+	ds.wg.Wait()
+	log.Info("Cache persister complete")
 }
 
 func (ds *InMemDataStore) Put(key string, val map[string]interface{}) error {
@@ -198,16 +199,17 @@ func (ds *InMemDataStore) Start() {
 	for _, persister := range ds.persisters {
 		persister.Run()
 	}
-}
 
-// Shutdown will signal the Serializers to close their open file handles and shutdown the IMDS.
-func (ds *InMemDataStore) Shutdown() {
-	log.Info("Shutdown command received, shutting down serializers")
-	ds.persisterCancel()
-	ds.persistCache()
-	log.Info("Waiting for all persisters to finish shutting down")
-	ds.wg.Wait()
-	log.Info("Shutdown complete")
+	// Spawn a go routine that will block waiting on the done channel, one unblocked will
+	// trigger the shutdown routine.
+	go func() {
+		<-ds.ctx.Done()
+		log.Info("ctx received Done message, shutting down serializers")
+		ds.persistCache()
+		log.Info("Waiting for all persisters to finish shutting down")
+		ds.wg.Wait()
+		log.Info("Shutdown complete")
+	}()
 }
 
 func (ds *InMemDataStore) getDatastoreShard(key string) (*Datastore, error) {
@@ -224,4 +226,15 @@ func GetDatastoreShardId(key string, numShards int) uint64 {
 	hasher.Write([]byte(key))
 	hash := hasher.Sum64()
 	return hash % uint64(numShards)
+}
+
+func (ds *InMemDataStore) writeCacheToCachePersisterChan() {
+	for _, datastore := range ds.datastores {
+		datastore.mux.Lock()
+		for _, v := range datastore.Data {
+			r := v.(map[string]interface{})
+			ds.cachePersisterChan <- r
+		}
+		datastore.mux.Unlock()
+	}
 }

@@ -82,3 +82,7 @@ func (p *Persister) persist(record map[string]interface{}) error {
 	}
 	return nil
 }
+
+func (p *Persister) setCtx(ctx context.Context) {
+	p.ctx = ctx
+}
